@@ -104,52 +104,59 @@ jobs:
         build-args: |
           VERSION=${{ steps.version.outputs.version_number }}
 
-    - name: Read changelog
+    - name: Prepare changelog
       id: changelog
       run: |
         if [[ -f "changelog.md" ]]; then
           echo "changelog_exists=true" >> $GITHUB_OUTPUT
-          # 使用随机分隔符避免冲突
-          DELIMITER="EOF_$(date +%s)_$$"
-          echo "changelog_content<<$DELIMITER" >> $GITHUB_OUTPUT
-          # 处理特殊字符，避免 markdown 解析问题
-          cat changelog.md | sed 's/\*/\\*/g; s/_/\\_/g' >> $GITHUB_OUTPUT
-          echo "$DELIMITER" >> $GITHUB_OUTPUT
+          # 将 changelog 内容写入临时文件，避免 GITHUB_OUTPUT 的多行问题
+          cp changelog.md /tmp/changelog.txt
           echo "✅ 找到 changelog.md 文件"
         else
           echo "changelog_exists=false" >> $GITHUB_OUTPUT
-          echo "changelog_content=" >> $GITHUB_OUTPUT
+          echo "暂无变更日志" > /tmp/changelog.txt
           echo "⚠️ 未找到 changelog.md 文件，release notes 将为空"
         fi
+
+    - name: Create release body
+      run: |
+        cat > /tmp/release_body.md << 'RELEASE_BODY_EOF'
+        ## 🚀 Release ${{ steps.version.outputs.version }}
+        
+        ### 📦 Docker Images
+        
+        ```bash
+        # AMD64 & ARM64 多架构镜像
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        ```
+        
+        ### 📋 变更日志
+        
+        RELEASE_BODY_EOF
+        
+        # 添加 changelog 内容
+        cat /tmp/changelog.txt >> /tmp/release_body.md
+        
+        # 添加构建信息
+        cat >> /tmp/release_body.md << 'BUILD_INFO_EOF'
+        
+        ---
+        
+        **构建信息:**
+        - 🏗️ 构建时间: ${{ github.event.head_commit.timestamp }}
+        - 🔧 构建来源: ${{ steps.version.outputs.source }}
+        - 📝 Commit: ${{ github.sha }}
+        - 🏷️ 支持架构: AMD64, ARM64
+        BUILD_INFO_EOF
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.version.outputs.version }}
         name: Release ${{ steps.version.outputs.version }}
-        body: |
-          ## 🚀 Release ${{ steps.version.outputs.version }}
-          
-          ### 📦 Docker Images
-          
-          ```bash
-          # AMD64 & ARM64 多架构镜像
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          ```
-          
-          ### 📋 变更日志
-          
-          ${{ steps.changelog.outputs.changelog_content || '暂无变更日志' }}
-          
-          ---
-          
-          **构建信息:**
-          - 🏗️ 构建时间: ${{ github.event.head_commit.timestamp }}
-          - 🔧 构建来源: ${{ steps.version.outputs.source }}
-          - 📝 Commit: ${{ github.sha }}
-          - 🏷️ 支持架构: AMD64, ARM64
+        body_path: /tmp/release_body.md
         draft: false
         prerelease: ${{ contains(steps.version.outputs.version, '-') }}
       env:
