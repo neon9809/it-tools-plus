@@ -1,3 +1,26 @@
+# 🔧 Fork 版本说明
+
+本仓库是对 [CorentinTh/it-tools](https://github.com/CorentinTh/it-tools) 的 **个人 fork**，在原有功能基础上进行了增强和扩展，主要增加了以下功能：
+
+1. **HTML 格式化增强**
+
+   * 支持自定义缩进大小（1\~8）和缩进字符（空格/Tab）
+   * 可选择是否换行属性
+   * 可选择是否保留原始换行
+   * 实时预览与一键复制格式化后的 HTML
+
+2. **前端 HTML 压缩工具**
+
+   * 支持去除多余空格和删除注释
+   * 实时预览与一键复制压缩后的 HTML
+   * 简单高效，便于快速优化前端 HTML 文件
+
+> ⚠️ 注意：本版本仅为个人 fork，功能与原仓库存在差异，原作者功能与更新请参考原项目。
+
+功能添加代码由[ChatGPT](https://chatgpt.com)完成，Dockerfile重写由[Claude](https://claude.ai) (Sonnet 4)完成。
+
+以下为原始项目README：
+
 <picture>
     <source srcset="./.github/logo-dark.png" media="(prefers-color-scheme: light)">
     <source srcset="./.github/logo-white.png" media="(prefers-color-scheme: dark)">

@@ -1,0 +1,172 @@
+name: Docker Build and Push
+
+on:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - '.gitignore'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (例如: v1.0.0)'
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Extract version from commit message or input
+      id: version
+      run: |
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version }}" ]]; then
+          VERSION="${{ github.event.inputs.version }}"
+          echo "source=manual" >> $GITHUB_OUTPUT
+        else
+          # 从 commit message 中提取版本号
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          VERSION=$(echo "$COMMIT_MSG" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          if [[ -z "$VERSION" ]]; then
+            echo "❌ 未在 commit message 中找到版本号格式 (例如: v1.0.0)"
+            exit 1
+          fi
+          echo "source=commit" >> $GITHUB_OUTPUT
+        fi
+        
+        # 验证版本号格式
+        if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "❌ 版本号格式错误: $VERSION (应为: v1.0.0)"
+          exit 1
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "version_number=${VERSION#v}" >> $GITHUB_OUTPUT
+        echo "✅ 检测到版本号: $VERSION"
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=raw,value=${{ steps.version.outputs.version }}
+          type=raw,value=${{ steps.version.outputs.version_number }}
+          type=raw,value=latest
+        labels: |
+          org.opencontainers.image.title=${{ github.repository }}
+          org.opencontainers.image.description=${{ github.event.repository.description }}
+          org.opencontainers.image.version=${{ steps.version.outputs.version }}
+          org.opencontainers.image.source=${{ github.repositoryUrl }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+          org.opencontainers.image.authors=${{ github.actor }}
+          app.version=${{ steps.version.outputs.version_number }}
+          build.date=${{ github.event.head_commit.timestamp }}
+          build.source=${{ steps.version.outputs.source }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          VERSION=${{ steps.version.outputs.version_number }}
+
+    - name: Read changelog
+      id: changelog
+      run: |
+        if [[ -f "changelog.md" ]]; then
+          echo "changelog_exists=true" >> $GITHUB_OUTPUT
+          # 读取 changelog 内容，处理多行文本
+          {
+            echo 'changelog_content<<EOF'
+            cat changelog.md
+            echo EOF
+          } >> $GITHUB_OUTPUT
+          echo "✅ 找到 changelog.md 文件"
+        else
+          echo "changelog_exists=false" >> $GITHUB_OUTPUT
+          echo "changelog_content=" >> $GITHUB_OUTPUT
+          echo "⚠️ 未找到 changelog.md 文件，release notes 将为空"
+        fi
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.version.outputs.version }}
+        name: Release ${{ steps.version.outputs.version }}
+        body: |
+          ## 🚀 Release ${{ steps.version.outputs.version }}
+          
+          ### 📦 Docker Images
+          
+          ```bash
+          # AMD64 & ARM64 多架构镜像
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version_number }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          ```
+          
+          ### 📋 变更日志
+          
+          ${{ steps.changelog.outputs.changelog_content || '暂无变更日志' }}
+          
+          ---
+          
+          **构建信息:**
+          - 🏗️ 构建时间: ${{ github.event.head_commit.timestamp }}
+          - 🔧 构建来源: ${{ steps.version.outputs.source }}
+          - 📝 Commit: ${{ github.sha }}
+          - 🏷️ 支持架构: AMD64, ARM64
+        draft: false
+        prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Output summary
+      run: |
+        echo "## 🎉 构建完成!" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 构建信息" >> $GITHUB_STEP_SUMMARY
+        echo "- **版本号:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **版本来源:** ${{ steps.version.outputs.source }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **镜像地址:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **支持架构:** AMD64, ARM64" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🐳 使用方式" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+        echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "docker run -p 80:80 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
