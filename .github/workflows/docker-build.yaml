@@ -109,12 +109,12 @@ jobs:
       run: |
         if [[ -f "changelog.md" ]]; then
           echo "changelog_exists=true" >> $GITHUB_OUTPUT
-          # 读取 changelog 内容，处理多行文本
-          {
-            echo 'changelog_content<<EOF'
-            cat changelog.md
-            echo EOF
-          } >> $GITHUB_OUTPUT
+          # 使用随机分隔符避免冲突
+          DELIMITER="EOF_$(date +%s)_$$"
+          echo "changelog_content<<$DELIMITER" >> $GITHUB_OUTPUT
+          # 处理特殊字符，避免 markdown 解析问题
+          cat changelog.md | sed 's/\*/\\*/g; s/_/\\_/g' >> $GITHUB_OUTPUT
+          echo "$DELIMITER" >> $GITHUB_OUTPUT
           echo "✅ 找到 changelog.md 文件"
         else
           echo "changelog_exists=false" >> $GITHUB_OUTPUT
